@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 
 internal static class ExpressionParser
 {
@@ -11,6 +12,9 @@ internal static class ExpressionParser
         public string Text;
     }
 
+    // ==================================================================
+    //  1D-компиляция (как было)
+    // ==================================================================
     public static Func<double, double> Compile(string expression)
     {
         if (string.IsNullOrWhiteSpace(expression))
@@ -20,10 +24,26 @@ internal static class ExpressionParser
         return x => EvaluateRpn(rpn, x);
     }
 
-    private static System.Collections.Generic.List<Token> ToRpn(string expression)
+    // ==================================================================
+    //  2D-компиляция — НОВОЕ
+    // ==================================================================
+    public static Func<double, double, double> Compile2D(string expression)
     {
-        var output = new System.Collections.Generic.List<Token>();
-        var ops = new System.Collections.Generic.Stack<string>();
+        if (string.IsNullOrWhiteSpace(expression))
+            throw new FormatException("Пустая функция.");
+
+        var rpn = ToRpn(expression);
+        return (x, y) => EvaluateRpn2D(rpn, x, y);
+    }
+
+    // ==================================================================
+    //  Разбор в ОПН — общий для 1D и 2D.
+    //  Единственное отличие от исходника: имя "y" теперь тоже переменная.
+    // ==================================================================
+    private static List<Token> ToRpn(string expression)
+    {
+        var output = new List<Token>();
+        var ops = new Stack<string>();
         string s = expression.Replace(" ", "").Replace(',', '.').ToLowerInvariant();
         bool expectUnary = true;
 
@@ -31,6 +51,7 @@ internal static class ExpressionParser
         {
             char c = s[i];
 
+            // ---------- Число ----------
             if (char.IsDigit(c) || c == '.')
             {
                 int start = i;
@@ -40,7 +61,7 @@ internal static class ExpressionParser
                 {
                     char d = s[i];
                     if (char.IsDigit(d) || d == '.') { i++; continue; }
-                    if ((d == 'e') && !hasE)
+                    if (d == 'e' && !hasE)
                     {
                         hasE = true;
                         i++;
@@ -52,8 +73,10 @@ internal static class ExpressionParser
 
                 string numText = s.Substring(start, i - start);
                 double value;
-                if (!double.TryParse(numText, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out value))
+                if (!double.TryParse(numText,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out value))
                     throw new FormatException("Некорректное число: " + numText);
 
                 output.Add(new Token { Type = TokenType.Number, Number = value });
@@ -61,15 +84,16 @@ internal static class ExpressionParser
                 continue;
             }
 
+            // ---------- Имя / переменная / функция ----------
             if (char.IsLetter(c))
             {
                 int start = i;
                 while (i < s.Length && char.IsLetter(s[i])) i++;
                 string name = s.Substring(start, i - start);
 
-                if (name == "x")
+                if (name == "x" || name == "y")          // <-- добавлен y
                 {
-                    output.Add(new Token { Type = TokenType.Variable, Text = "x" });
+                    output.Add(new Token { Type = TokenType.Variable, Text = name });
                     expectUnary = false;
                 }
                 else if (name == "pi")
@@ -94,6 +118,7 @@ internal static class ExpressionParser
                 continue;
             }
 
+            // ---------- Скобки ----------
             if (c == '(')
             {
                 ops.Push("(");
@@ -119,6 +144,7 @@ internal static class ExpressionParser
                 continue;
             }
 
+            // ---------- Операторы ----------
             if (IsOperatorChar(c))
             {
                 string op = c.ToString();
@@ -168,20 +194,21 @@ internal static class ExpressionParser
         };
     }
 
-    private static double EvaluateRpn(System.Collections.Generic.List<Token> rpn, double x)
+    // ==================================================================
+    //  1D-вычисление 
+    // ==================================================================
+    private static double EvaluateRpn(List<Token> rpn, double x)
     {
-        var stack = new System.Collections.Generic.Stack<double>();
+        var stack = new Stack<double>();
 
         foreach (var token in rpn)
         {
             if (token.Type == TokenType.Number)
-            {
                 stack.Push(token.Number);
-            }
+
             else if (token.Type == TokenType.Variable)
-            {
-                stack.Push(x);
-            }
+                stack.Push(x);                        // 1D: любая переменная = x
+
             else if (token.Type == TokenType.Operator)
             {
                 if (token.Text == "u-")
@@ -190,11 +217,9 @@ internal static class ExpressionParser
                     stack.Push(-stack.Pop());
                     continue;
                 }
-
                 if (stack.Count < 2) throw new FormatException("Недостаточно операндов.");
                 double b = stack.Pop();
                 double a = stack.Pop();
-
                 switch (token.Text)
                 {
                     case "+": stack.Push(a + b); break;
@@ -208,19 +233,7 @@ internal static class ExpressionParser
             else if (token.Type == TokenType.Function)
             {
                 if (stack.Count < 1) throw new FormatException("Нет аргумента функции.");
-                double a = stack.Pop();
-                switch (token.Text)
-                {
-                    case "sin": stack.Push(Math.Sin(a)); break;
-                    case "cos": stack.Push(Math.Cos(a)); break;
-                    case "tan": stack.Push(Math.Tan(a)); break;
-                    case "exp": stack.Push(Math.Exp(a)); break;
-                    case "ln": stack.Push(Math.Log(a)); break;
-                    case "log": stack.Push(Math.Log10(a)); break;
-                    case "sqrt": stack.Push(Math.Sqrt(a)); break;
-                    case "abs": stack.Push(Math.Abs(a)); break;
-                    default: throw new FormatException("Неизвестная функция: " + token.Text);
-                }
+                stack.Push(ApplyFunction(token.Text, stack.Pop()));
             }
         }
 
@@ -230,6 +243,77 @@ internal static class ExpressionParser
         return stack.Pop();
     }
 
+    // ==================================================================
+    //  2D-вычисление
+    // ==================================================================
+    private static double EvaluateRpn2D(List<Token> rpn, double x, double y)
+    {
+        var stack = new Stack<double>();
+
+        foreach (var token in rpn)
+        {
+            if (token.Type == TokenType.Number)
+                stack.Push(token.Number);
+
+            else if (token.Type == TokenType.Variable)
+                stack.Push(token.Text == "y" ? y : x);   // различаем x и y
+
+            else if (token.Type == TokenType.Operator)
+            {
+                if (token.Text == "u-")
+                {
+                    if (stack.Count < 1) throw new FormatException("Ошибка унарного минуса.");
+                    stack.Push(-stack.Pop());
+                    continue;
+                }
+                if (stack.Count < 2) throw new FormatException("Недостаточно операндов.");
+                double b = stack.Pop();
+                double a = stack.Pop();
+                switch (token.Text)
+                {
+                    case "+": stack.Push(a + b); break;
+                    case "-": stack.Push(a - b); break;
+                    case "*": stack.Push(a * b); break;
+                    case "/": stack.Push(a / b); break;
+                    case "^": stack.Push(Math.Pow(a, b)); break;
+                    default: throw new FormatException("Неизвестный оператор: " + token.Text);
+                }
+            }
+            else if (token.Type == TokenType.Function)
+            {
+                if (stack.Count < 1) throw new FormatException("Нет аргумента функции.");
+                stack.Push(ApplyFunction(token.Text, stack.Pop()));
+            }
+        }
+
+        if (stack.Count != 1)
+            throw new FormatException("Некорректное выражение.");
+
+        return stack.Pop();
+    }
+
+    // ==================================================================
+    //  Общее применение функции — вынесено, чтобы не дублировать switch
+    // ==================================================================
+    private static double ApplyFunction(string name, double a)
+    {
+        switch (name)
+        {
+            case "sin": return Math.Sin(a);
+            case "cos": return Math.Cos(a);
+            case "tan": return Math.Tan(a);
+            case "exp": return Math.Exp(a);
+            case "ln": return Math.Log(a);
+            case "log": return Math.Log10(a);
+            case "sqrt": return Math.Sqrt(a);
+            case "abs": return Math.Abs(a);
+            default: throw new FormatException("Неизвестная функция: " + name);
+        }
+    }
+
+    // ==================================================================
+    //  Служебное
+    // ==================================================================
     private static bool IsFunction(string s)
     {
         return s == "sin" || s == "cos" || s == "tan" || s == "exp" ||
@@ -265,4 +349,3 @@ internal static class ExpressionParser
         return op == "^" || op == "u-";
     }
 }
-

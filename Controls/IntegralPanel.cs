@@ -1,31 +1,40 @@
-﻿
-using System.Windows.Forms;
+﻿using System.Windows.Forms;
 using System;
+using System.Collections.Generic;
 
 public class IntegralPanel : UserControl
 {
+    // ===== Параметры =====
     private GroupBox grpParams;
-    private ComboBox cmbFunction, cmbMethod, cmbAlgorithm;
-    private NumericUpDown numA, numB, numN, numEps;
-    private Label lblA, lblB, lblN, lblEps, lblFunction, lblMethod, lblAlgorithm;
+    private ComboBox cmbTaskType, cmbFunction, cmbMethod, cmbAlgorithm;
+    private NumericUpDown numA, numB, numN, numEps, numM;
+    private NumericUpDown numC, numD, numM2;          // второе измерение
+    private Label lblTaskType, lblA, lblB, lblN, lblEps, lblFunction,
+                  lblMethod, lblAlgorithm, lblM, lblC, lblD, lblM2, lblHint;
     private Button btnCalculate, btnClear;
-    private NumericUpDown numM;
-    private Label lblM, lblHint;
-    private DataGridView dgvSteps;
-    private DataGridView dgvResults;
+    private DataGridView dgvSteps, dgvResults;
 
-    private Func<double, double> currentFunc;
+    // ===== Функции =====
+    private Func<double, double> currentFunc;         // 1D
+    private Func<double, double, double> currentFunc2D; // 2D
     private Func<double, double> currentAntiderivative;
 
-    private const int MaxN = 1000000;
+    private const int MaxN1D = 1000000;
+    private const int MaxN2D = 2000;                  // для кратного жёстко ограничиваем
+
+    private Dictionary<(double, double), double> cache2D;
 
     public IntegralPanel()
     {
         BuildParams();
         BuildResults();
         UpdateFunction();
+        UpdateTaskType();
     }
 
+    // =====================================================================
+    // 1. ПАРАМЕТРЫ
+    // =====================================================================
     private void BuildParams()
     {
         grpParams = new GroupBox
@@ -34,65 +43,145 @@ public class IntegralPanel : UserControl
             Left = 10,
             Top = 10,
             Width = 1060,
-            Height = 180,
+            Height = 245,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
 
-        int y1 = 25, y2 = 60, y3 = 95;
+        int y0 = 22, y1 = 55, y2 = 88, y3 = 121, y4 = 154;
         int x = 15;
 
-        lblFunction = new Label { Text = "Функция:", Left = x, Top = y1 + 3, Width = 65 };
-        cmbFunction = new ComboBox { Left = x + 70, Top = y1, Width = 200, DropDownStyle = ComboBoxStyle.DropDown };
-        cmbFunction.Items.AddRange(new object[] {
-                "sin(x)",
-                "x^2",
-                "exp(-x^2)",
-                "1 / (1 + x^2)",
-                "cos(x)",
-                "sqrt(0.8*x^2+1)/(x+sqrt(1.5*x^2+2))"
-            });
-        cmbFunction.SelectedIndex = 0;
+        // ---- Тип задачи ----
+        lblTaskType = new Label { Text = "Задача:", Left = x, Top = y0 + 3, Width = 55 };
+        cmbTaskType = new ComboBox
+        {
+            Left = x + 60,
+            Top = y0,
+            Width = 240,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        cmbTaskType.Items.AddRange(new object[] {
+            "Одномерный интеграл",
+            "Кратный (повторное интегрирование)"
+        });
+        cmbTaskType.SelectedIndex = 0;
+        cmbTaskType.SelectedIndexChanged += (s, e) => { UpdateTaskType(); UpdateFunction(); };
 
-        lblMethod = new Label { Text = "Метод:", Left = x + 300, Top = y1 + 3, Width = 55 };
-        cmbMethod = new ComboBox { Left = x + 360, Top = y1, Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
+        // ---- Функция ----
+        lblFunction = new Label { Text = "Функция:", Left = x + 330, Top = y0 + 3, Width = 60 };
+        cmbFunction = new ComboBox
+        {
+            Left = x + 395,
+            Top = y0,
+            Width = 300,
+            DropDownStyle = ComboBoxStyle.DropDown
+        };
+        cmbFunction.Items.AddRange(new object[] {
+            "sin(x)",
+            "x^2",
+            "exp(-x^2)",
+            "1 / (1 + x^2)",
+            "cos(x)",
+            // для кратного:
+            "x + y",
+            "x * y",
+            "sin(x) * cos(y)",
+            "exp(-(x^2 + y^2))"
+        });
+        cmbFunction.SelectedIndex = 0;
+        cmbFunction.TextChanged += (s, e) => UpdateFunction();
+        cmbFunction.SelectedIndexChanged += (s, e) => UpdateFunction();
+
+        // ---- Метод ----
+        lblMethod = new Label { Text = "Метод:", Left = x, Top = y1 + 3, Width = 55 };
+        cmbMethod = new ComboBox
+        {
+            Left = x + 60,
+            Top = y1,
+            Width = 260,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
         cmbMethod.Items.AddRange(new object[] {
-                "Левых прямоугольников",
-                "Правых прямоугольников",
-                "Трапеций",
-                "Парабол (Симпсона)"
-            });
+            "Левых прямоугольников",
+            "Правых прямоугольников",
+            "Трапеций",
+            "Парабол (Симпсона)"
+        });
         cmbMethod.SelectedIndex = 0;
 
-        lblAlgorithm = new Label { Text = "Алгоритм:", Left = x + 610, Top = y1 + 3, Width = 70 };
-        cmbAlgorithm = new ComboBox { Left = x + 680, Top = y1, Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
+        // ---- Алгоритм ----
+        lblAlgorithm = new Label { Text = "Алгоритм:", Left = x + 340, Top = y1 + 3, Width = 65 };
+        cmbAlgorithm = new ComboBox
+        {
+            Left = x + 410,
+            Top = y1,
+            Width = 340,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
         cmbAlgorithm.Items.AddRange(new object[] {
-                "Постоянный шаг",
-                "Двойной пересчёт (h / 2)",
-                "По остаточному члену",
-                "Алгоритм 1 (двойной пересчёт, h / 2)",
-                "Алгоритм 2 (переменный шаг)"
-            });
+        "Постоянный шаг",                    // index 0
+        "Двойной пересчёт (правило Рунге)",  // index 1 
+        "По остаточному члену",              // index 2
+        "Переменный шаг (переиспользование точек)" // index 3
+        });
         cmbAlgorithm.SelectedIndex = 0;
+        cmbAlgorithm.SelectedIndexChanged += (s, e) => UpdateAlgorithm();
 
+        // ---- 1D интервал ----
         lblA = new Label { Text = "a =", Left = x, Top = y2 + 3, Width = 30 };
-        numA = new NumericUpDown { Left = x + 35, Top = y2, Width = 100, DecimalPlaces = 6, Minimum = -1000, Maximum = 1000, Increment = 0.1m, Value = 0m };
+        numA = new NumericUpDown
+        {
+            Left = x + 35,
+            Top = y2,
+            Width = 100,
+            DecimalPlaces = 6,
+            Minimum = -1000,
+            Maximum = 1000,
+            Increment = 0.1m,
+            Value = 0m
+        };
 
         lblB = new Label { Text = "b =", Left = x + 160, Top = y2 + 3, Width = 30 };
-        numB = new NumericUpDown { Left = x + 195, Top = y2, Width = 100, DecimalPlaces = 6, Minimum = -1000, Maximum = 1000, Increment = 0.1m, Value = (decimal)Math.PI };
+        numB = new NumericUpDown
+        {
+            Left = x + 195,
+            Top = y2,
+            Width = 100,
+            DecimalPlaces = 6,
+            Minimum = -1000,
+            Maximum = 1000,
+            Increment = 0.1m,
+            Value = (decimal)Math.PI
+        };
 
         lblN = new Label { Text = "n =", Left = x + 320, Top = y2 + 3, Width = 30 };
-        numN = new NumericUpDown { Left = x + 355, Top = y2, Width = 90, Minimum = 1, Maximum = 1000000, Value = 10 };
+        numN = new NumericUpDown
+        {
+            Left = x + 355,
+            Top = y2,
+            Width = 90,
+            Minimum = 1,
+            Maximum = 1000000,
+            Value = 10
+        };
 
         lblEps = new Label { Text = "ε =", Left = x + 470, Top = y2 + 3, Width = 30 };
-        numEps = new NumericUpDown { Left = x + 505, Top = y2, Width = 120, DecimalPlaces = 8, Minimum = 0.00000001m, Maximum = 1m, Increment = 0.0001m, Value = 0.0001m, Enabled = false };
+        numEps = new NumericUpDown
+        {
+            Left = x + 505,
+            Top = y2,
+            Width = 120,
+            DecimalPlaces = 8,
+            Minimum = 0.00000001m,
+            Maximum = 1m,
+            Increment = 0.0001m,
+            Value = 0.0001m,
+            Enabled = false
+        };
 
-        btnCalculate = new Button { Text = "Вычислить", Left = x, Top = y3, Width = 130, Height = 30 };
-        btnClear = new Button { Text = "Очистить", Left = x + 140, Top = y3, Width = 110, Height = 30 };
-
-        lblM = new Label { Text = "M =", Left = 675, Top = y2 + 3, Width = 35 };
+        lblM = new Label { Text = "M =", Left = x + 650, Top = y2 + 3, Width = 35 };
         numM = new NumericUpDown
         {
-            Left = 715,
+            Left = x + 690,
             Top = y2,
             Width = 130,
             DecimalPlaces = 6,
@@ -102,27 +191,65 @@ public class IntegralPanel : UserControl
             Enabled = false
         };
 
-        lblHint = new Label { Left = 15, Top = 135, Width = 1015, Height = 38 };
+        // ---- 2D интервал [c,d] и m ----
+        lblC = new Label { Text = "c =", Left = x, Top = y3 + 3, Width = 30, Visible = false };
+        numC = new NumericUpDown
+        {
+            Left = x + 35,
+            Top = y3,
+            Width = 100,
+            DecimalPlaces = 6,
+            Minimum = -1000,
+            Maximum = 1000,
+            Increment = 0.1m,
+            Value = 0m,
+            Visible = false
+        };
 
-        grpParams.Controls.AddRange(new Control[] { lblM, numM, lblHint });
-        grpParams.Controls.AddRange(new Control[] {
-                lblFunction, cmbFunction,
-                lblMethod, cmbMethod,
-                lblAlgorithm, cmbAlgorithm,
-                lblA, numA, lblB, numB,
-                lblN, numN, lblEps, numEps,
-                btnCalculate, btnClear
-            });
+        lblD = new Label { Text = "d =", Left = x + 160, Top = y3 + 3, Width = 30, Visible = false };
+        numD = new NumericUpDown
+        {
+            Left = x + 195,
+            Top = y3,
+            Width = 100,
+            DecimalPlaces = 6,
+            Minimum = -1000,
+            Maximum = 1000,
+            Increment = 0.1m,
+            Value = (decimal)Math.PI,
+            Visible = false
+        };
 
+        lblM2 = new Label { Text = "m =", Left = x + 320, Top = y3 + 3, Width = 30, Visible = false };
+        numM2 = new NumericUpDown
+        {
+            Left = x + 355,
+            Top = y3,
+            Width = 90,
+            Minimum = 1,
+            Maximum = 100000,
+            Value = 10,
+            Visible = false
+        };
+
+        // ---- Кнопки ----
+        btnCalculate = new Button { Text = "Вычислить", Left = x, Top = y4, Width = 130, Height = 30 };
+        btnClear = new Button { Text = "Очистить", Left = x + 140, Top = y4, Width = 110, Height = 30 };
         btnCalculate.Click += BtnCalculate_Click;
         btnClear.Click += BtnClear_Click;
-        cmbAlgorithm.SelectedIndexChanged += (s, e) => UpdateAlgorithm();
-        cmbFunction.TextChanged += (s, e) => UpdateFunction();
-        cmbFunction.SelectedIndexChanged += (s, e) => UpdateFunction();
 
-        UpdateAlgorithm();
+        lblHint = new Label { Left = 15, Top = 195, Width = 1015, Height = 40 };
+
+        grpParams.Controls.AddRange(new Control[] {
+            lblTaskType, cmbTaskType, lblFunction, cmbFunction,
+            lblMethod, cmbMethod, lblAlgorithm, cmbAlgorithm,
+            lblA, numA, lblB, numB, lblN, numN, lblEps, numEps, lblM, numM,
+            lblC, numC, lblD, numD, lblM2, numM2,
+            btnCalculate, btnClear, lblHint
+        });
 
         Controls.Add(grpParams);
+        UpdateAlgorithm();
     }
 
     private void BuildResults()
@@ -130,33 +257,37 @@ public class IntegralPanel : UserControl
         dgvResults = new DataGridView
         {
             Left = 10,
-            Top = 200,
+            Top = 265,
             Width = 10,
-            Height = 180,
+            Height = 200,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             AllowUserToAddRows = false,
             ReadOnly = true,
             RowHeadersVisible = false,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
         };
+        dgvResults.Columns.Add("Task", "Задача");
         dgvResults.Columns.Add("Method", "Метод");
         dgvResults.Columns.Add("Algorithm", "Алгоритм");
-        dgvResults.Columns.Add("N", "Разбиения n");
-        dgvResults.Columns.Add("H", "Шаг h");
-        dgvResults.Columns.Add("R", "Разность / оценка R");
+        dgvResults.Columns.Add("N", "n");
+        dgvResults.Columns.Add("M2", "m");
+        dgvResults.Columns.Add("H", "h_x");
+        dgvResults.Columns.Add("H2", "h_y");
+        dgvResults.Columns.Add("R", "Разность / R");
         dgvResults.Columns.Add("Status", "Статус");
         dgvResults.Columns.Add("Result", "Результат");
+        dgvResults.Columns.Add("Exact", "Точное");
         dgvResults.Columns.Add("Error", "Погрешность");
+        dgvResults.Columns.Add("Order", "Порядок p");
         dgvResults.Columns.Add("Time", "Время, мс");
-
         Controls.Add(dgvResults);
 
         dgvSteps = new DataGridView
         {
             Left = 10,
-            Top = 395,
+            Top = 470,
             Width = 10,
-            Height = 0,
+            Height = 200,
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
             AllowUserToAddRows = false,
             ReadOnly = true,
@@ -165,70 +296,94 @@ public class IntegralPanel : UserControl
         };
         dgvSteps.Columns.Add("K", "Пересчёт");
         dgvSteps.Columns.Add("N", "n");
-        dgvSteps.Columns.Add("H", "h");
-        dgvSteps.Columns.Add("I", "I(n)");
+        dgvSteps.Columns.Add("M2", "m");
+        dgvSteps.Columns.Add("H", "h_x");
+        dgvSteps.Columns.Add("I", "I");
         dgvSteps.Columns.Add("R", "R");
         Controls.Add(dgvSteps);
+    }
+
+    // =====================================================================
+    // 2. ОБНОВЛЕНИЕ СОСТОЯНИЙ
+    // =====================================================================
+    private void UpdateTaskType()
+    {
+        bool is2D = cmbTaskType.SelectedIndex == 1;
+        lblC.Visible = numC.Visible = is2D;
+        lblD.Visible = numD.Visible = is2D;
+        lblM2.Visible = numM2.Visible = is2D;
+        UpdateAlgorithm();
     }
 
     private void UpdateAlgorithm()
     {
         int algorithm = cmbAlgorithm.SelectedIndex;
+        bool is2D = cmbTaskType.SelectedIndex == 1;
+
         numEps.Enabled = algorithm != 0;
         numN.Enabled = algorithm != 2;
         numM.Enabled = algorithm == 2;
-
-        // Метод доступен для ВСЕХ алгоритмов — пользователь сам выбирает,
-        // каким методом считать. Псевдокод из PDF был лишь примером.
+        lblM.Visible = numM.Visible = algorithm == 2;
         cmbMethod.Enabled = true;
 
         if (algorithm == 2)
-            lblHint.Text = "M — верхняя граница модуля производной на всём интервале: 1-й порядок для прямоугольников, 2-й для трапеций, 4-й для Симпсона.";
+            lblHint.Text = is2D
+                ? "M — общая граница модулей нужных частных производных по x и y. " +
+                  "Для обоих направлений выбираются n и m."
+                : "M — верхняя граница модуля производной порядка 1 (прямоугольники), " +
+                  "2 (трапеции), 4 (Симпсон).";
         else if (algorithm == 0)
-            lblHint.Text = "n — число разбиений; для Симпсона нечётное n увеличивается на 1.";
-        else if (algorithm == 3)
-            lblHint.Text = "Алгоритм 1 из PDF: IN = 0; R = |I2N − IN|; h = h/2, пока R > ε. Работает с любым методом.";
-        else if (algorithm == 4)
-            lblHint.Text = "Алгоритм 2 из PDF: переменный шаг с переиспользованием точек. Работает для прямоугольников и трапеций (для Симпсона — обычный двойной пересчёт).";
+            lblHint.Text = "Фиксированное число разбиений n" + (is2D ? " и m." : ".") +
+                           " Для Симпсона нечётные значения увеличиваются на 1.";
+        else if (algorithm == 1)
+            lblHint.Text = is2D
+                ? "Двойной пересчёт по обеим осям; R — оценка разности интегралов."
+                : "Удваиваем n, пока |I(2n) − I(n)| не станет меньше ε.";
         else
-            lblHint.Text = "Начинаем с заданного n, удваиваем число разбиений до |I(2n) − I(n)| < ε.";
+            lblHint.Text = is2D
+                ? "Уточнение сетки по обеим осям с кешированием значений f(x,y)."
+                : "Удваиваем n с переиспользованием вычисленных значений функции.";
     }
 
-    // ============== ФУНКЦИИ ==============
-
+    // =====================================================================
+    // 3. ФУНКЦИИ (1D и 2D)
+    // =====================================================================
     private void UpdateFunction()
     {
         string expression = cmbFunction.Text.Trim();
         if (expression.StartsWith("f(x) =", StringComparison.OrdinalIgnoreCase))
             expression = expression.Substring(6).Trim();
 
+        bool is2D = cmbTaskType.SelectedIndex == 1;
+
         try
         {
+            if (is2D)
+            {
+                currentFunc2D = ExpressionParser.Compile2D(expression);
+                currentFunc = null;
+                currentAntiderivative = null;
+                return;
+            }
+
+            currentFunc2D = null;
             currentFunc = ExpressionParser.Compile(expression);
 
             string normalized = expression.Replace(" ", "").ToLowerInvariant();
             switch (normalized)
             {
-                case "sin(x)":
-                    currentAntiderivative = x => -Math.Cos(x);
-                    break;
-                case "x^2":
-                    currentAntiderivative = x => x * x * x / 3.0;
-                    break;
-                case "1/(1+x^2)":
-                    currentAntiderivative = x => Math.Atan(x);
-                    break;
-                case "cos(x)":
-                    currentAntiderivative = x => Math.Sin(x);
-                    break;
-                default:
-                    currentAntiderivative = null;
-                    break;
+                case "sin(x)": currentAntiderivative = x => -Math.Cos(x); break;
+                case "x^2": currentAntiderivative = x => x * x * x / 3.0; break;
+                case "1/(1+x^2)": currentAntiderivative = x => Math.Atan(x); break;
+                case "cos(x)": currentAntiderivative = x => Math.Sin(x); break;
+                case "exp(-x^2)": currentAntiderivative = null; break; // нет в элементарных
+                default: currentAntiderivative = null; break;
             }
         }
         catch
         {
             currentFunc = null;
+            currentFunc2D = null;
             currentAntiderivative = null;
         }
     }
@@ -239,23 +394,20 @@ public class IntegralPanel : UserControl
         return currentAntiderivative(b) - currentAntiderivative(a);
     }
 
-    // ============== ЧИСЛЕННЫЕ МЕТОДЫ ==============
-
+    // =====================================================================
+    // 4. 1D-МЕТОДЫ (без изменений)
+    // =====================================================================
     private double LeftRectangles(double a, double b, int n)
     {
-        double h = (b - a) / n;
-        double sum = 0;
-        for (int i = 0; i < n; i++)
-            sum += Evaluate(a + i * h);
+        double h = (b - a) / n, sum = 0;
+        for (int i = 0; i < n; i++) sum += Evaluate(a + i * h);
         return sum * h;
     }
 
     private double RightRectangles(double a, double b, int n)
     {
-        double h = (b - a) / n;
-        double sum = 0;
-        for (int i = 1; i <= n; i++)
-            sum += Evaluate(a + i * h);
+        double h = (b - a) / n, sum = 0;
+        for (int i = 1; i <= n; i++) sum += Evaluate(a + i * h);
         return sum * h;
     }
 
@@ -263,8 +415,7 @@ public class IntegralPanel : UserControl
     {
         double h = (b - a) / n;
         double sum = 0.5 * (Evaluate(a) + Evaluate(b));
-        for (int i = 1; i < n; i++)
-            sum += Evaluate(a + i * h);
+        for (int i = 1; i < n; i++) sum += Evaluate(a + i * h);
         return sum * h;
     }
 
@@ -295,275 +446,358 @@ public class IntegralPanel : UserControl
 
     private double Evaluate(double x)
     {
-        double value = currentFunc(x);
-        if (double.IsNaN(value) || double.IsInfinity(value))
-            throw new ArithmeticException("Функция не определена или не конечна при x = " + x.ToString("G10"));
-        return value;
+        double v = currentFunc(x);
+        if (double.IsNaN(v) || double.IsInfinity(v))
+            throw new ArithmeticException("Функция не определена при x = " + x.ToString("G10"));
+        return v;
+    }
+
+    // =====================================================================
+    // 5. 2D — МЕТОД ПОВТОРНОГО ИНТЕГРИРОВАНИЯ
+    // =====================================================================
+    /// <summary>
+    /// Внутренний интеграл по y: ∫_c^d f(x,y) dy для фиксированного x.
+    /// </summary>
+    private double InnerIntegral(int method, double x, double c, double d, int m)
+    {
+        double h = (d - c) / m;
+        switch (method)
+        {
+            case 0: // левые
+                {
+                    double s = 0;
+                    for (int j = 0; j < m; j++) s += Eval2D(x, c + j * h);
+                    return s * h;
+                }
+            case 1: // правые
+                {
+                    double s = 0;
+                    for (int j = 1; j <= m; j++) s += Eval2D(x, c + j * h);
+                    return s * h;
+                }
+            case 2: // трапеции
+                {
+                    double s = 0.5 * (Eval2D(x, c) + Eval2D(x, d));
+                    for (int j = 1; j < m; j++) s += Eval2D(x, c + j * h);
+                    return s * h;
+                }
+            case 3: // Симпсон
+                {
+                    int mm = (m % 2 == 0) ? m : m + 1;
+                    double hh = (d - c) / mm;
+                    double s = Eval2D(x, c) + Eval2D(x, d);
+                    for (int j = 1; j < mm; j++)
+                    {
+                        double y = c + j * hh;
+                        s += (j % 2 == 0 ? 2.0 : 4.0) * Eval2D(x, y);
+                    }
+                    return s * hh / 3.0;
+                }
+            default: return double.NaN;
+        }
     }
 
     /// <summary>
-    /// Оценка остаточного члена по формулам (1)-(3) из PDF.
-    /// ВАЖНО: в PDF для метода парабол используется знаменатель (2n)^4,
-    /// где n — число ПАР отрезков. В нашем коде n — общее число отрезков,
-    /// поэтому (2n)^4 = 16*n^4.
+    /// Внешний интеграл по x: ∫_a^b InnerIntegral(x) dx.
     /// </summary>
+    private double Compute2D(int method, double a, double b, int n,
+                             double c, double d, int m)
+    {
+        double h = (b - a) / n;
+        switch (method)
+        {
+            case 0: // левые
+                {
+                    double s = 0;
+                    for (int i = 0; i < n; i++)
+                        s += InnerIntegral(method, a + i * h, c, d, m);
+                    return s * h;
+                }
+            case 1: // правые
+                {
+                    double s = 0;
+                    for (int i = 1; i <= n; i++)
+                        s += InnerIntegral(method, a + i * h, c, d, m);
+                    return s * h;
+                }
+            case 2: // трапеции
+                {
+                    double s = 0.5 * (InnerIntegral(method, a, c, d, m)
+                                    + InnerIntegral(method, b, c, d, m));
+                    for (int i = 1; i < n; i++)
+                        s += InnerIntegral(method, a + i * h, c, d, m);
+                    return s * h;
+                }
+            case 3: // Симпсон
+                {
+                    int nn = (n % 2 == 0) ? n : n + 1;
+                    double hh = (b - a) / nn;
+                    double s = InnerIntegral(method, a, c, d, m)
+                             + InnerIntegral(method, b, c, d, m);
+                    for (int i = 1; i < nn; i++)
+                    {
+                        double x = a + i * hh;
+                        double w = (i % 2 == 0) ? 2.0 : 4.0;
+                        s += w * InnerIntegral(method, x, c, d, m);
+                    }
+                    return s * hh / 3.0;
+                }
+            default: return double.NaN;
+        }
+    }
+
+    private double Eval2D(double x, double y)
+    {
+        double v;
+        if (cache2D != null && cache2D.TryGetValue((x, y), out v))
+            return v;
+        v = currentFunc2D(x, y);
+        if (double.IsNaN(v) || double.IsInfinity(v))
+            throw new ArithmeticException(
+                $"Функция не определена при x = {x:G10}, y = {y:G10}");
+        if (cache2D != null) cache2D[(x, y)] = v;
+        return v;
+    }
+
+    // =====================================================================
+    // 6. ОСТАТОЧНЫЙ ЧЛЕН (только 1D)
+    // =====================================================================
     private double ResidualBound(double length, int n, int method, double m)
     {
         if (method <= 1) return length * length * m / (2.0 * n);
         if (method == 2) return Math.Pow(length, 3) * m / (12.0 * n * n);
-        return Math.Pow(length, 5) * m / (180.0 * Math.Pow(2.0 * n, 4));
+        return Math.Pow(length, 5) * m / (180.0 * Math.Pow(n, 4));
     }
 
-    private void AddStep(int k, int n, double a, double b, double value, double r)
+    // =====================================================================
+    // 7. ГЛАВНЫЙ ОБРАБОТЧИК
+    // =====================================================================
+    private void AddStep(int k, int n, int m, double a, double b,
+                         double value, double r)
     {
-        dgvSteps.Rows.Add(k, n, ((b - a) / n).ToString("G10"),
-            value.ToString("G12"), double.IsNaN(r) ? "—" : r.ToString("G8"));
+        dgvSteps.Rows.Add(
+            k, n, m,
+            ((b - a) / n).ToString("G10"),
+            value.ToString("G12"),
+            double.IsNaN(r) ? "—" : r.ToString("G8"));
+    }
+
+    // Трапеции: при удвоении разбиений пересчитываются только новые середины.
+    private double InitialTrapezoid(double a, double b, int n)
+    {
+        return Trapezoids(a, b, n);
+    }
+
+    private double RefineTrapezoid(double oldValue, double a, double b, int oldN)
+    {
+        double h = (b - a) / oldN;
+        double midSum = 0;
+        for (int i = 0; i < oldN; i++)
+            midSum += Evaluate(a + (i + 0.5) * h);
+        return oldValue / 2.0 + h * midSum / 2.0;
+    }
+
+    private double FromTrapezoid(int method, double trapezoid,
+                                 double a, double b, int n, double oldTrapezoid)
+    {
+        double h = (b - a) / n;
+        if (method == 0) return trapezoid + h * (Evaluate(a) - Evaluate(b)) / 2.0;
+        if (method == 1) return trapezoid + h * (Evaluate(b) - Evaluate(a)) / 2.0;
+        if (method == 2) return trapezoid;
+        return (4.0 * trapezoid - oldTrapezoid) / 3.0;
+    }
+
+    private double Bound2D(double xLength, double yLength, int n, int m,
+                           int method, double derivativeBound)
+    {
+        // Предполагается, что M ограничивает необходимые чистые частные
+        // производные по обеим переменным на всём прямоугольнике.
+        return yLength * ResidualBound(xLength, n, method, derivativeBound)
+             + xLength * ResidualBound(yLength, m, method, derivativeBound);
     }
 
     private void BtnCalculate_Click(object sender, EventArgs e)
     {
         dgvSteps.Rows.Clear();
         btnCalculate.Enabled = false;
+        cache2D = null;
         try
         {
             double a = (double)numA.Value, b = (double)numB.Value;
-            if (a == b) throw new ArgumentException("Интервал нулевой длины.");
+            if (a == b) throw new ArgumentException("Интервал по x нулевой длины.");
+
             UpdateFunction();
-            if (currentFunc == null) throw new FormatException("Не удалось разобрать функцию.");
+            bool is2D = cmbTaskType.SelectedIndex == 1;
+            if (is2D && currentFunc2D == null)
+                throw new FormatException("Не удалось разобрать функцию от x и y.");
+            if (!is2D && currentFunc == null)
+                throw new FormatException("Не удалось разобрать функцию от x.");
 
             int method = cmbMethod.SelectedIndex;
             int algorithm = cmbAlgorithm.SelectedIndex;
             int n = (int)numN.Value;
             if (method == 3 && n % 2 != 0) n++;
             double eps = (double)numEps.Value;
-            double m = (double)numM.Value;
-
-            double r = double.NaN;
-            double result = 0;
-            int finalN = n;
-            bool converged = true;
+            double mBound = (double)numM.Value;
+            double c = is2D ? (double)numC.Value : 0;
+            double d = is2D ? (double)numD.Value : 0;
+            int m = is2D ? (int)numM2.Value : 0;
+            if (is2D)
+            {
+                if (c == d) throw new ArgumentException("Интервал по y нулевой длины.");
+                if (method == 3 && m % 2 != 0) m++;
+                if (n > MaxN2D || m > MaxN2D)
+                    throw new ArgumentException($"Для двойного интеграла n и m не больше {MaxN2D}.");
+            }
+            if (algorithm == 2 && mBound <= 0)
+                throw new ArgumentException("Укажите положительную оценку M для производной.");
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            double r = double.NaN;
+            double result = double.NaN;
+            int finalN = n, finalM = m;
+            bool converged = true;
+            var values = new List<double>();
+            var stepsN = new List<int>();
+            var stepsM = new List<int>();
+            int k = 0;
+            Func<int, int, double> compute = (nx, my) => is2D
+                ? Compute2D(method, a, b, nx, c, d, my)
+                : ComputeByMethod(method, a, b, nx);
 
-            if (algorithm == 0)
+            if (algorithm == 2)
             {
-                // Постоянный шаг
-                result = ComputeByMethod(method, a, b, n);
-                finalN = n;
-                AddStep(1, n, a, b, result, r);
+                // Подбор количества разбиений по гарантированной оценке остатка.
+                // Для двойного интеграла распределяем ε между двумя направлениями.
+                int limit = is2D ? MaxN2D : MaxN1D;
+                int unit = method == 3 ? 2 : 1;
+                double lx = Math.Abs(b - a), ly = Math.Abs(d - c);
+                double budgetX = is2D ? eps / 2.0 : eps;
+                double budgetY = eps / 2.0;
+                int nx = unit;
+                while ((is2D ? ly : 1.0) * ResidualBound(lx, nx, method, mBound) > budgetX)
+                {
+                    if (nx > limit / 2)
+                        throw new ArgumentException("Точность требует слишком много разбиений по x.");
+                    nx *= 2;
+                }
+                n = nx;
+                if (is2D)
+                {
+                    int my = unit;
+                    while (lx * ResidualBound(ly, my, method, mBound) > budgetY)
+                    {
+                        if (my > limit / 2)
+                            throw new ArgumentException("Точность требует слишком много разбиений по y.");
+                        my *= 2;
+                    }
+                    m = my;
+                }
+                r = is2D ? Bound2D(lx, ly, n, m, method, mBound)
+                         : ResidualBound(lx, n, method, mBound);
+                result = compute(n, m);
+                AddStep(++k, n, m, a, b, result, r);
+                values.Add(result); stepsN.Add(n); stepsM.Add(m);
             }
-            else if (algorithm == 1)
+            else if (algorithm == 0)
             {
-                // Двойной пересчёт (h / 2): |I(2n) - I(n)| < ε
-                double previous = ComputeByMethod(method, a, b, n);
-                int k = 0;
-                AddStep(++k, n, a, b, previous, double.NaN);
-
+                result = compute(n, m);
+                AddStep(++k, n, m, a, b, result, r);
+                values.Add(result); stepsN.Add(n); stepsM.Add(m);
+            }
+            else if (algorithm == 3 && !is2D)
+            {
+                // Переменный шаг: только новые узлы, старые значения не пересчитываются.
+                double t = InitialTrapezoid(a, b, n);
+                double tCoarse = method == 3 ? InitialTrapezoid(a, b, n / 2) : double.NaN;
+                result = FromTrapezoid(method, t, a, b, n, tCoarse);
+                AddStep(++k, n, m, a, b, result, double.NaN);
+                values.Add(result); stepsN.Add(n); stepsM.Add(m);
                 while (true)
                 {
-                    if (n > MaxN / 2)
+                    if (n > MaxN1D / 2) { converged = false; break; }
+                    double nextT = RefineTrapezoid(t, a, b, n);
+                    int nextN = n * 2;
+                    double next = FromTrapezoid(method, nextT, a, b, nextN, t);
+                    r = Math.Abs(next - result);
+                    t = nextT; n = nextN; result = next;
+                    AddStep(++k, n, m, a, b, result, r);
+                    values.Add(result); stepsN.Add(n); stepsM.Add(m);
+                    if (r <= eps) break;
+                }
+            }
+            else
+            {
+                // Двойной пересчёт: в 2D одновременно уточняем обе оси.
+                // В режиме 3 значения узлов (x,y) кешируются между пересчётами.
+                if (is2D && algorithm == 3)
+                    cache2D = new Dictionary<(double, double), double>();
+                result = compute(n, m);
+                AddStep(++k, n, m, a, b, result, double.NaN);
+                values.Add(result); stepsN.Add(n); stepsM.Add(m);
+                int limit = is2D ? MaxN2D : MaxN1D;
+                while (true)
+                {
+                    if (n > limit / 2 || (is2D && m > limit / 2))
                     {
                         converged = false;
-                        result = previous;
-                        finalN = n;
                         break;
                     }
                     n *= 2;
-                    result = ComputeByMethod(method, a, b, n);
-                    r = Math.Abs(result - previous);
-                    AddStep(++k, n, a, b, result, r);
-                    if (r < eps) { finalN = n; break; }
-                    previous = result;
+                    if (is2D) m *= 2;
+                    double next = compute(n, m);
+                    r = Math.Abs(next - result);
+                    result = next;
+                    AddStep(++k, n, m, a, b, result, r);
+                    values.Add(result); stepsN.Add(n); stepsM.Add(m);
+                    if (r <= eps) break;
                 }
             }
-            else if (algorithm == 2)
-            {
-                // По остаточному члену
-                int unit = method == 3 ? 2 : 1;
-                int lo = 1, hi = MaxN / unit;
-                if (ResidualBound(Math.Abs(b - a), hi * unit, method, m) >= eps / 2)
-                    throw new ArgumentException("Для заданных M и ε требуется более 1 000 000 разбиений.");
-
-                while (lo < hi)
-                {
-                    int mid = lo + (hi - lo) / 2;
-                    if (ResidualBound(Math.Abs(b - a), mid * unit, method, m) < eps / 2) hi = mid;
-                    else lo = mid + 1;
-                }
-                n = lo * unit;
-                r = ResidualBound(Math.Abs(b - a), n, method, m);
-                result = ComputeByMethod(method, a, b, n);
-                finalN = n;
-                AddStep(1, n, a, b, result, r);
-            }
-            else if (algorithm == 3)
-            {
-                // ===== Алгоритм 1 из PDF (обобщённый) =====
-                // IN = 0; h = (b-a)/n;
-                // Цикл: I2N = метод с шагом h; R = |I2N - IN|;
-                //        если k > 1 и R <= E — стоп; иначе IN = I2N; h /= 2.
-                const int maxIter = 40;
-                double h = (b - a) / n;
-                double IN = 0;
-                int k = 0;
-
-                while (k < maxIter)
-                {
-                    int currentN = Math.Max(1, (int)Math.Round((b - a) / h));
-                    if (currentN > MaxN)
-                    {
-                        converged = false;
-                        break;
-                    }
-
-                    double I2N = ComputeByMethod(method, a, b, currentN);
-                    double R = Math.Abs(I2N - IN);
-                    AddStep(++k, currentN, a, b, I2N, k == 1 ? double.NaN : R);
-
-                    if (k > 1 && R <= eps)
-                    {
-                        result = I2N;
-                        r = R;
-                        finalN = currentN;
-                        break;
-                    }
-
-                    IN = I2N;
-                    h = h / 2.0;
-                }
-
-                if (k >= maxIter)
-                {
-                    converged = false;
-                    result = IN;
-                    finalN = (int)Math.Round((b - a) / h);
-                }
-            }
-            else if (algorithm == 4)
-            {
-
-                if (method == 3)
-                {
-                    // Симпсон: обычный двойной пересчёт
-                    double previous = ComputeByMethod(method, a, b, n);
-                    int k = 0;
-                    AddStep(++k, n, a, b, previous, double.NaN);
-                    while (true)
-                    {
-                        if (n > MaxN / 2) { converged = false; result = previous; finalN = n; break; }
-                        n *= 2;
-                        result = ComputeByMethod(method, a, b, n);
-                        r = Math.Abs(result - previous);
-                        AddStep(++k, n, a, b, result, r);
-                        if (r < eps) { finalN = n; break; }
-                        previous = result;
-                    }
-                }
-                else
-                {
-                    // Прямоугольники и трапеции: переменный шаг с переиспользованием
-                    const int maxIter = 40;
-
-                    double hv = (b - a) / n;   // шаг вычисления
-                    double S;                  // накопленная сумма ординат
-                    int k = 0;
-
-                    // 1-я итерация: стандартный проход с шагом hv
-                    S = ComputeSumForVariableStep(method, a, b, hv, hv, null);
-                    double IN = S * hv;
-                    AddStep(++k, Math.Max(1, (int)Math.Round((b - a) / hv)), a, b, IN, double.NaN);
-
-                    // Последующие итерации
-                    while (k < maxIter)
-                    {
-                        double hs = hv / 2.0;   // шаг смещения
-                        double hd = hv;         // шаг движения = предыдущий шаг вычисления
-
-                        // Добавляем только новые точки: a+hs, a+hs+hd, a+hs+2*hd, ...
-                        // Для трапеций нужно следить за концевыми точками a и b.
-                        double newSum = ComputeSumForVariableStep(method, a, b, hs, hd, S);
-                        S += newSum;
-                        double I2N = S * hs;    // новый шаг = hs
-                        double R = Math.Abs(I2N - IN);
-
-                        int currentN = Math.Max(1, (int)Math.Round((b - a) / hs));
-                        AddStep(++k, currentN, a, b, I2N, R);
-
-                        if (R <= eps)
-                        {
-                            result = I2N;
-                            r = R;
-                            finalN = currentN;
-                            break;
-                        }
-
-                        IN = I2N;
-                        hv = hs; // новый шаг вычисления
-
-                        if ((b - a) / hv > MaxN)
-                        {
-                            converged = false;
-                            result = I2N;
-                            finalN = currentN;
-                            break;
-                        }
-                    }
-
-                    if (k >= maxIter)
-                    {
-                        converged = false;
-                        result = IN;
-                    }
-                }
-            }
-
+            finalN = n; finalM = m;
             sw.Stop();
-
             if (double.IsNaN(result) || double.IsInfinity(result))
-                throw new ArithmeticException("Результат вычисления не конечен.");
+                throw new ArithmeticException("Результат не конечен.");
 
-            double exact = ExactIntegral(a, b);
+            double exact = is2D ? double.NaN : ExactIntegral(a, b);
+            double err = double.IsNaN(exact) ? double.NaN : Math.Abs(result - exact);
+            string orderText = "—";
+            if (!double.IsNaN(exact) && values.Count >= 2)
+            {
+                int last = values.Count - 1;
+                bool halfStep = stepsN[last] == 2 * stepsN[last - 1] &&
+                    (!is2D || stepsM[last] == 2 * stepsM[last - 1]);
+                double e0 = Math.Abs(values[last - 1] - exact);
+                double e1 = Math.Abs(values[last] - exact);
+                if (halfStep && e0 > 0 && e1 > 0)
+                    orderText = (Math.Log(e0 / e1) / Math.Log(2.0)).ToString("F3");
+            }
+
             dgvResults.Rows.Add(
-                cmbMethod.Text,
-                cmbAlgorithm.Text,
-                finalN,
+                is2D ? "Кратный" : "1D", cmbMethod.Text, cmbAlgorithm.Text,
+                finalN, is2D ? finalM.ToString() : "—",
                 ((b - a) / finalN).ToString("G10"),
+                is2D ? ((d - c) / finalM).ToString("G10") : "—",
                 double.IsNaN(r) ? "—" : r.ToString("G8"),
                 converged ? "Вычислено" : "Точность не достигнута",
                 result.ToString("G12"),
-                double.IsNaN(exact) ? "—" : Math.Abs(result - exact).ToString("G8"),
-                sw.Elapsed.TotalMilliseconds.ToString("F3"));
+                double.IsNaN(exact) ? "—" : exact.ToString("G12"),
+                double.IsNaN(err) ? "—" : err.ToString("G8"),
+                orderText, sw.Elapsed.TotalMilliseconds.ToString("F3"));
 
             if (!converged)
-                MessageBox.Show("Достигнут предел разбиений. Последний результат выведен, но требуемая точность не достигнута.",
+                MessageBox.Show("Достигнут предел разбиений. Требуемая точность не достигнута.",
                     "Предел вычислений", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Ошибка вычисления", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(ex.Message, "Ошибка вычисления",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-        finally { btnCalculate.Enabled = true; }
-    }
-    private double ComputeSumForVariableStep(int method, double a, double b, double hs, double hd, double? previousSum)
-    {
-        double sum = 0;
-
-        if (method == 2) // Трапеции
+        finally
         {
-            // Концевые точки добавляем только на первой итерации
-            if (previousSum == null)
-                sum += 0.5 * (Evaluate(a) + Evaluate(b));
-            // Внутренние точки
-            for (double x = a + hs; x < b - hd / 2.0; x += hd)
-                sum += Evaluate(x);
+            cache2D = null;
+            btnCalculate.Enabled = true;
         }
-        else // Левые или правые прямоугольники
-        {
-            for (double x = a + hs; x < b - hd / 2.0; x += hd)
-                sum += Evaluate(x);
-        }
-
-        return sum;
     }
 
     private void BtnClear_Click(object sender, EventArgs e)
@@ -572,4 +806,3 @@ public class IntegralPanel : UserControl
         dgvSteps.Rows.Clear();
     }
 }
-
