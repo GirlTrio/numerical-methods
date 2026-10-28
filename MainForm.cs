@@ -9,7 +9,7 @@ namespace LabIntegral
         private TabControl tabs;
 
         private IntegralPanel integralPanel;
-        private DerivativePanel derivativePanel;
+        private DifferentialPanel derivativePanel;
 
         public MainForm()
         {
@@ -31,7 +31,7 @@ namespace LabIntegral
             };
 
             integralPanel = new IntegralPanel { Dock = DockStyle.Fill };
-            derivativePanel = new DerivativePanel { Dock = DockStyle.Fill };
+            derivativePanel = new DifferentialPanel { Dock = DockStyle.Fill };
 
             var pageIntegral = new TabPage("Интегрирование");
             pageIntegral.Controls.Add(integralPanel);
