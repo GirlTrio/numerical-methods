@@ -10,6 +10,7 @@ namespace LabIntegral
 
         private IntegralPanel integralPanel;
         private DifferentialPanel derivativePanel;
+        private GaussPanel gaussPanel;
 
         public MainForm()
         {
@@ -32,6 +33,7 @@ namespace LabIntegral
 
             integralPanel = new IntegralPanel { Dock = DockStyle.Fill };
             derivativePanel = new DifferentialPanel { Dock = DockStyle.Fill };
+            gaussPanel = new GaussPanel { Dock = DockStyle.Fill };
 
             var pageIntegral = new TabPage("Интегрирование");
             pageIntegral.Controls.Add(integralPanel);
@@ -39,8 +41,12 @@ namespace LabIntegral
             var pageDerivative = new TabPage("Дифференцирование");
             pageDerivative.Controls.Add(derivativePanel);
 
+            var pageGauss = new TabPage("Метод Гаусса");
+            pageGauss.Controls.Add(gaussPanel);
+
             tabs.TabPages.Add(pageIntegral);
             tabs.TabPages.Add(pageDerivative);
+            tabs.TabPages.Add(pageGauss);
 
             Controls.Add(tabs);
         }

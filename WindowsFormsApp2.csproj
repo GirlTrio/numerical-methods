@@ -107,6 +107,9 @@
     <Compile Include="Controls\DerivativePanel.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="Controls\GaussPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="ExpressionParser.cs" />
     <Compile Include="Controls\IntegralPanel.cs">
       <SubType>UserControl</SubType>
